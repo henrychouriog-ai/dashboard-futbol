@@ -79,7 +79,7 @@ with st.sidebar:
 
         equipos = api.obtener_equipos_liga(liga_sel['id'])
         local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'])
-        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1, format_func=lambda x: x['nombre'])
+        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'])
         
         xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
         xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
@@ -88,7 +88,8 @@ with st.sidebar:
         st.markdown("---")
         l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
         l_tarjetas = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.2)
-    else: st.stop()
+    else: 
+        st.stop()
 
 # --- CÁLCULOS PREVIOS ---
 ph, pe, pa = 0, 0, 0
@@ -201,8 +202,10 @@ with t4:
     
     # --- FIX DEL ERROR DE CLIP ---
     def calcular_kelly(row):
-        k = (((row["Cuota"] * row["Prob"]) - 1) / (row["Cuota"] - 1)) * 0.25
-        return max(0, k) # Aquí reemplazamos .clip(lower=0)
+        if row["Cuota"] > 1:
+            k = (((row["Cuota"] * row["Prob"]) - 1) / (row["Cuota"] - 1)) * 0.25
+            return max(0, k)
+        return 0
 
     df_b["Kelly %"] = df_b.apply(calcular_kelly, axis=1)
     df_b["Monto $"] = (df_b["Kelly %"] * bank).apply(lambda x: f"${int(x):,}")
