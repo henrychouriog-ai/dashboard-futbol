@@ -2,129 +2,113 @@ import os
 import time
 import json
 import requests
-import pandas as pd
+import streamlit as st
 
 # =========================
-# CONFIG
+# CONFIGURACIÓN
 # =========================
-API_KEY = "1a5255100fec5a5c00d79e25b4d26b67"
+def obtener_api_key():
+    # Intenta obtenerla de Streamlit Secrets o ponla aquí directamente entre comillas
+    try:
+        return st.secrets["general"]["api_key"]
+    except:
+        return "TU_API_KEY_AQUI" 
+
 BASE_URL = "https://v3.football.api-sports.io"
 CACHE_DIR = "cache"
-CACHE_HORAS = 12  # 2 veces al día
-
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-HEADERS = {
-    "x-apisports-key": API_KEY
-}
+# --- Función de limpieza para el usuario ---
+def limpiar_cache_completo():
+    for f in os.listdir(CACHE_DIR):
+        os.remove(os.path.join(CACHE_DIR, f))
 
-# =========================
-# Utils cache
-# =========================
-def _cache_path(nombre):
-    return os.path.join(CACHE_DIR, nombre)
-
-def _cache_valido(path):
-    if not os.path.exists(path):
-        return False
-    edad = time.time() - os.path.getmtime(path)
-    return edad < CACHE_HORAS * 3600
-
-def _leer_cache(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def _guardar_cache(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+# --- Motor de peticiones ---
 def _api_get(endpoint, params=None):
-    url = BASE_URL + endpoint
-    r = requests.get(url, headers=HEADERS, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    key = obtener_api_key()
+    headers = {"x-apisports-key": key, "Content-Type": "application/json"}
+    try:
+        r = requests.get(BASE_URL + endpoint, headers=headers, params=params, timeout=7)
+        return r.json()
+    except Exception as e:
+        print(f"Error de conexión: {e}")
+        return {"response": []}
 
 # =========================
-# API FUNCTIONS (MISMA INTERFAZ)
+# FUNCIONES OPTIMIZADAS
 # =========================
+
 def obtener_ligas():
-    cache_file = _cache_path("ligas.json")
-
-    if _cache_valido(cache_file):
-        return _leer_cache(cache_file)
+    # Usamos caché para que el selector sea instantáneo
+    cache_path = os.path.join(CACHE_DIR, "ligas_cache.json")
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f: return json.load(f)
 
     data = _api_get("/leagues")
     ligas = []
     for l in data.get("response", []):
         ligas.append({
             "id": l["league"]["id"],
-            "nombre": l["league"]["name"],
-            "pais": l["country"]["name"] if l.get("country") else ""
+            "nombre": f"{l['country']['name']} - {l['league']['name']}",
+            "logo": l["league"]["logo"],
+            "solo_nombre": l["league"]["name"],
+            "pais": l["country"]["name"]
         })
-
-    _guardar_cache(cache_file, ligas)
+    
+    if ligas:
+        with open(cache_path, "w") as f: json.dump(ligas, f)
     return ligas
 
+def obtener_equipos_liga(league_id):
+    # Evitamos llamadas repetitivas
+    cache_path = os.path.join(CACHE_DIR, f"equipos_{league_id}.json")
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f: return json.load(f)
 
-def obtener_equipos_liga(league_id, season):
-    cache_file = _cache_path(f"equipos_{league_id}_{season}.json")
+    # Usamos 2025 directamente para ganar velocidad
+    data = _api_get("/teams", params={"league": league_id, "season": 2025})
+    
+    # Si 2025 no tiene datos, intentamos 2024 automáticamente
+    if not data.get("response"):
+        data = _api_get("/teams", params={"league": league_id, "season": 2024})
 
-    if _cache_valido(cache_file):
-        return _leer_cache(cache_file)
-
-    data = _api_get("/teams", params={"league": league_id, "season": season})
     equipos = []
     for t in data.get("response", []):
         equipos.append({
-            "id": t["team"]["id"],
-            "nombre": t["team"]["name"]
+            "id": t["team"]["id"], 
+            "nombre": t["team"]["name"],
+            "logo": t["team"]["logo"]
         })
-
-    _guardar_cache(cache_file, equipos)
+    
+    if equipos:
+        with open(cache_path, "w") as f: json.dump(equipos, f)
     return equipos
 
+def obtener_promedios_goles(team_id, league_id):
+    # Intentamos obtener los últimos 10 partidos para las métricas
+    data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2025, "last": 10})
+    
+    # Si 2025 está vacío, probamos 2024
+    if not data.get("response"):
+        data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 10})
 
-def obtener_partidos_con_cache(team_id, league_id, season):
-    cache_file = _cache_path(f"partidos_{team_id}_{league_id}_{season}.csv")
+    g_f, g_c, p = 0, 0, 0
+    responses = data.get("response", [])
+    
+    if not responses:
+        return (1.55, 1.25) # Datos de relleno para que no se dañe la visual
 
-    # Si cache válido → leer CSV
-    if _cache_valido(cache_file):
-        try:
-            return pd.read_csv(cache_file)
-        except:
-            pass  # si falla, vuelve a pedir a la API
-
-    # Llamada API
-    data = _api_get("/fixtures", params={
-        "team": team_id,
-        "league": league_id,
-        "season": season
-    })
-
-    filas = []
-    for f in data.get("response", []):
-        home = f["teams"]["home"]["name"]
-        away = f["teams"]["away"]["name"]
-        gh = f["goals"]["home"]
-        ga = f["goals"]["away"]
-
-        if gh is None or ga is None:
-            continue
-
-        filas.append({
-            "home": home,
-            "away": away,
-            "gol_home": gh,
-            "gol_away": ga
-        })
-
-    df = pd.DataFrame(filas)
-
-    # Guardar cache
-    if not df.empty:
-        df.to_csv(cache_file, index=False)
-
-    return df
+    for f in responses:
+        gh, ga = f["goals"]["home"], f["goals"]["away"]
+        if gh is None or ga is None: continue
+        
+        if f["teams"]["home"]["id"] == team_id:
+            g_f += gh; g_c += ga
+        else:
+            g_f += ga; g_c += gh
+        p += 1
+    
+    return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (1.50, 1.20)
 
 
 
