@@ -1,343 +1,223 @@
 import streamlit as st
-import math
 import pandas as pd
-import os
+import numpy as np
+import plotly.express as px
+import api  
+import math
 
-# =========================
-# Configuración
-# =========================
-st.set_page_config(page_title="Dashboard Fútbol Pro", layout="wide")
-SEASON = 2024
+# ==========================================
+# 🎨 CONFIGURACIÓN Y ESTILO v6.0
+# ==========================================
+st.set_page_config(page_title="BETPLAY AI ANALYZER PRO", layout="wide")
 
-# =========================
-# Cargar CSV locales (BLINDADO)
-# =========================
-@st.cache_data
-def cargar_equipos():
-    ruta = "data/equipos.csv"
+st.markdown("""
+    <style>
+    [data-testid="stAppViewContainer"] { background-color: #050a14; }
+    [data-testid="stHeader"] { background: rgba(0,0,0,0); }
+    
+    .stTabs [data-baseweb="tab"] { 
+        background-color: #0e1629; color: #94a3b8; border-radius: 8px 8px 0 0;
+        padding: 10px 20px; border: 1px solid #1e293b;
+    }
+    .stTabs [aria-selected="true"] { 
+        background-color: #009345 !important; color: white !important; 
+    }
 
-    if not os.path.exists(ruta) or os.path.getsize(ruta) == 0:
-        st.error("❌ El archivo data/equipos.csv no existe o está vacío.")
-        return pd.DataFrame(columns=["equipo", "liga", "gf", "gc", "cornersf", "cornersc", "cardsf", "cardsc", "partidos"])
+    .mkt-card {
+        background: #0e1629; padding: 20px; border-radius: 15px;
+        border: 1px solid #1e293b; text-align: center;
+    }
 
-    # 👇 TU CSV USA ; COMO SEPARADOR
-    df = pd.read_csv(ruta, sep=";")
+    .match-banner {
+        background: linear-gradient(135deg, #004a99 0%, #050a14 100%);
+        padding: 35px; border-radius: 25px; text-align: center; 
+        border: 1px solid #1e3a8a; border-bottom: 6px solid #009345;
+        margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
 
-    # Limpieza fuerte de nombres de columnas
-    df.columns = df.columns.str.strip().str.replace("\ufeff", "").str.replace("\u00a0", "")
+    .betplay-header {
+        background-color: #004a99; color: white; padding: 12px; 
+        border-radius: 8px; font-weight: bold; margin: 20px 0;
+        border-left: 6px solid #009345; display: flex; justify-content: space-between; align-items: center;
+    }
+    
+    .stButton>button {
+        width: 100%; background-color: #009345; color: white;
+        border-radius: 10px; border: none; font-weight: bold;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-    if "liga" not in df.columns or "equipo" not in df.columns:
-        st.error(f"❌ Columnas encontradas en equipos.csv: {df.columns.tolist()}")
-        st.stop()
-
-    return df
-
-
-@st.cache_data
-def cargar_partidos():
-    ruta = "data/partidos.csv"
-
-    if not os.path.exists(ruta) or os.path.getsize(ruta) == 0:
-        st.warning("⚠️ data/partidos.csv está vacío. Se usará DataFrame vacío.")
-        return pd.DataFrame(columns=["home", "away", "gol_home", "gol_away"])
-
-    try:
-        # 👇 Probablemente también está con ;
-        df = pd.read_csv(ruta, sep=";")
-        df.columns = df.columns.str.strip()
-        return df
-    except pd.errors.EmptyDataError:
-        st.warning("⚠️ data/partidos.csv no tiene datos válidos.")
-        return pd.DataFrame(columns=["home", "away", "gol_home", "gol_away"])
-
-df_equipos = cargar_equipos()
-df_partidos = cargar_partidos()
-
-# =========================
-# Reemplazo de funciones API (MISMA INTERFAZ)
-# =========================
-def obtener_ligas():
-    ligas = []
-    for liga in sorted(df_equipos["liga"].dropna().unique().tolist()):
-        ligas.append({
-            "id": liga,
-            "nombre": liga,
-            "pais": ""
-        })
-    return ligas
-
-def obtener_equipos_liga(league_id, season):
-    df_liga = df_equipos[df_equipos["liga"] == league_id]
-    equipos = []
-    for i, row in df_liga.iterrows():
-        equipos.append({
-            "id": row["equipo"],
-            "nombre": row["equipo"]
-        })
-    return equipos
-
-def obtener_partidos_con_cache(team_id, league_id, season):
-    if df_partidos is None or len(df_partidos) == 0:
-        return None
-
-    required = {"home", "away", "gol_home", "gol_away"}
-    if not required.issubset(set(df_partidos.columns)):
-        st.warning(f"⚠️ Columnas en partidos.csv: {df_partidos.columns.tolist()}")
-        return None
-
-    df = df_partidos.copy()
-    df_team = df[(df["home"] == team_id) | (df["away"] == team_id)]
-    if len(df_team) == 0:
-        return None
-    return df_team
-
-# =========================
-# Cache de llamadas (Streamlit)
-# =========================
-@st.cache_data(ttl=60*60*12)
-def cached_obtener_ligas():
-    return obtener_ligas()
-
-@st.cache_data(ttl=60*60*12)
-def cached_obtener_equipos_liga(league_id, season):
-    return obtener_equipos_liga(league_id, season)
-
-# =========================
-# Helpers UI (Cards)
-# =========================
-def color_por_prob(p):
-    if p >= 0.7:
-        return "#2ecc71"
-    elif p >= 0.5:
-        return "#f1c40f"
-    else:
-        return "#e74c3c"
-
-def card(titulo, valor, sub="", p=None):
-    bg = "#3498db" if p is None else color_por_prob(p)
-    st.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            padding:18px;
-            border-radius:14px;
-            text-align:center;
-            margin-bottom:12px;
-            box-shadow:0 6px 16px rgba(0,0,0,.25);
-            color:white;
-        ">
-            <div style="font-weight:700; opacity:.95;">{titulo}</div>
-            <div style="font-size:30px; font-weight:900; margin:6px 0;">{valor}</div>
-            <div style="opacity:.9;">{sub}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-# =========================
-# Poisson
-# =========================
+# --- Funciones Core ---
 def poisson_prob(lmbda, k):
+    if lmbda <= 0: return 1.0 if k == 0 else 0.0
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
-def matriz(lh, la, maxg=7):
-    m = {}
-    for i in range(maxg + 1):
-        for j in range(maxg + 1):
-            m[(i, j)] = poisson_prob(lh, i) * poisson_prob(la, j)
-    return m
+def calcular_o_u(lmbda, limite):
+    prob_under = sum(poisson_prob(lmbda, k) for k in range(int(limite) + 1))
+    return (1 - prob_under) * 100, prob_under * 100
 
-def calcular_1x2(lh, la):
-    m = matriz(lh, la)
-    ph = pd_ = pa = 0
-    for (i, j), p in m.items():
-        if i > j:
-            ph += p
-        elif i == j:
-            pd_ += p
-        else:
-            pa += p
-    return ph, pd_, pa
+# ==========================================
+# 🛠️ SIDEBAR
+# ==========================================
+with st.sidebar:
+    st.markdown("""
+        <div style="text-align: center; padding: 20px; background-color: #0e1629; border-radius: 15px; border: 1px solid #1e3a8a; margin-bottom: 10px;">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/0/06/Flag_of_Venezuela.svg" width="90" style="border-radius: 5px; margin-bottom: 10px;">
+            <p style="color: #009345; font-size: 0.8rem; font-weight: bold; margin:0; letter-spacing: 2px;">ANALYTICS PRO</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-def prob_btts(lh, la):
-    m = matriz(lh, la)
-    p = 0
-    for (i, j), pr in m.items():
-        if i > 0 and j > 0:
-            p += pr
-    return p
+    if st.button("🔄 ACTUALIZAR DATOS API"):
+        st.cache_data.clear()
+        st.rerun()
 
-def prob_over_under_total(lmbda_total, linea):
-    p_under = 0
-    for k in range(0, int(math.floor(linea)) + 1):
-        p_under += poisson_prob(lmbda_total, k)
-    p_over = 1 - p_under
-    return p_over, p_under
+    ligas = api.obtener_ligas()
+    if ligas:
+        liga_sel = st.selectbox("Seleccionar Liga", ligas, format_func=lambda x: x['nombre'])
+        st.markdown(f'<div style="text-align: center; margin-bottom:15px;"><img src="{liga_sel.get("logo", "")}" width="45"></div>', unsafe_allow_html=True)
 
-# =========================
-# EV y Kelly
-# =========================
-def valor_esperado(prob, cuota):
-    return prob * cuota - 1
+        equipos = api.obtener_equipos_liga(liga_sel['id'])
+        local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'])
+        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1, format_func=lambda x: x['nombre'])
+        
+        xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
+        xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
+        l_h, l_a = (xh_f + xa_c) / 2, (xa_f + xh_c) / 2
+        
+        st.markdown("---")
+        l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
+        l_tarjetas = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.2)
+    else: st.stop()
 
-def kelly(prob, cuota):
-    b = cuota - 1
-    q = 1 - prob
-    if b <= 0:
-        return 0
-    f = (b * prob - q) / b
-    return max(0, f)
+# --- CÁLCULOS PREVIOS ---
+ph, pe, pa = 0, 0, 0
+for i in range(7):
+    for j in range(7):
+        p = poisson_prob(l_h, i) * poisson_prob(l_a, j)
+        if i > j: ph += p
+        elif i == j: pe += p
+        else: pa += p
 
-# =========================
-# Procesar CSV partidos
-# =========================
-def preparar_df(df, team_name):
-    if df is None or len(df) == 0:
-        return df
-    df = df.copy()
-    df["es_local"] = df["home"] == team_name
-    df["gf"] = df.apply(lambda r: r["gol_home"] if r["es_local"] else r["gol_away"], axis=1)
-    df["gc"] = df.apply(lambda r: r["gol_away"] if r["es_local"] else r["gol_home"], axis=1)
-    return df
+prob_btts_si = (1 - poisson_prob(l_h, 0)) * (1 - poisson_prob(l_a, 0))
+prob_btts_no = 1 - prob_btts_si
+btts_label = "BTTS: SÍ" if prob_btts_si >= 0.5 else "BTTS: NO"
+btts_perc = prob_btts_si if prob_btts_si >= 0.5 else prob_btts_no
 
-def promedios(df):
-    if df is None or len(df) == 0:
-        return 1.0, 1.0
-    return float(df["gf"].mean()), float(df["gc"].mean())
+matriz_vals = np.zeros((6, 6))
+for i in range(6):
+    for j in range(6):
+        matriz_vals[i, j] = poisson_prob(l_h, i) * poisson_prob(l_a, j) * 100
 
-def forma_reciente(df, n=5):
-    if df is None or len(df) == 0:
-        return 1.0, 1.0
-    df2 = df.tail(n)
-    return float(df2["gf"].mean()), float(df2["gc"].mean())
+# ==========================================
+# 🏟️ DASHBOARD
+# ==========================================
+st.markdown(f"""
+    <div class="match-banner">
+        <div style="display: flex; justify-content: space-around; align-items: center;">
+            <div style="text-align: center; width: 30%;">
+                <img src="{local_obj.get('logo','')}" width="95" onerror="this.src='https://cdn-icons-png.flaticon.com/512/53/53254.png'">
+                <p style="color: white; font-weight: bold; margin-top: 10px;">{local_obj['nombre']}</p>
+            </div>
+            <div style="width: 30%; text-align: center;">
+                <img src="{liga_sel.get('logo', '')}" width="50" style="margin-bottom: 5px;">
+                <h1 style='color:white; margin:0;'>VS</h1>
+                <p style='color:#009345; font-weight:bold; font-size: 0.8rem;'>{liga_sel['nombre']}</p>
+            </div>
+            <div style="text-align: center; width: 30%;">
+                <img src="{visit_obj.get('logo','')}" width="95" onerror="this.src='https://cdn-icons-png.flaticon.com/512/53/53254.png'">
+                <p style="color: white; font-weight: bold; margin-top: 10px;">{visit_obj['nombre']}</p>
+            </div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
-# =========================
-# Sidebar
-# =========================
-st.sidebar.header("⚙️ Filtros")
+t1, t2, t3, t4 = st.tabs(["📈 PROYECCIONES", "🎯 LÍNEAS O/U", "📊 MATRIZ", "💰 COMPARADOR"])
 
-with st.spinner("Cargando ligas..."):
-    ligas_api = cached_obtener_ligas()
+with t1:
+    st.markdown('<div class="betplay-header">Probabilidades Principales</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.markdown(f'<div class="mkt-card"><small>{local_obj["nombre"].upper()}</small><h2 style="color:#009345;">{ph*100:.1f}%</h2></div>', unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="mkt-card"><small>EMPATE</small><h2 style="color:#009345;">{pe*100:.1f}%</h2></div>', unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="mkt-card"><small>{visit_obj["nombre"].upper()}</small><h2 style="color:#009345;">{pa*100:.1f}%</h2></div>', unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="mkt-card"><small>{btts_label}</small><h2 style="color:#009345;">{btts_perc*100:.1f}%</h2></div>', unsafe_allow_html=True)
 
-if not ligas_api:
-    st.error("❌ No se pudieron cargar las ligas desde los CSV.")
-    st.stop()
+with t2:
+    st.markdown('<div class="betplay-header">⚽ GOLES TOTALES</div>', unsafe_allow_html=True)
+    g_lines = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
+    cols_g = st.columns(6)
+    for i, l in enumerate(g_lines):
+        p_o, p_u = calcular_o_u(l_h + l_a, l)
+        cols_g[i].markdown(f'<div class="mkt-card"><small>{l}</small><br><b>O: {p_o:.1f}%</b><br><small style="color:#94a3b8">U: {p_u:.1f}%</small></div>', unsafe_allow_html=True)
 
-liga_sel = st.sidebar.selectbox(
-    "Selecciona Liga",
-    ligas_api,
-    format_func=lambda x: f"{x['nombre']}"
-)
+    st.markdown('<div class="betplay-header">🚩 CÓRNERS TOTALES</div>', unsafe_allow_html=True)
+    c_lines = [8.5, 9.5, 10.5, 11.5]
+    cols_c = st.columns(4)
+    for i, l in enumerate(c_lines):
+        p_o, p_u = calcular_o_u(l_corners, l)
+        cols_c[i].markdown(f'<div class="mkt-card"><small>{l}</small><br><b>O: {p_o:.1f}%</b><br><small style="color:#94a3b8">U: {p_u:.1f}%</small></div>', unsafe_allow_html=True)
 
-if not liga_sel:
-    st.warning("Selecciona una liga")
-    st.stop()
+    st.markdown('<div class="betplay-header">🟨 TARJETAS TOTALES</div>', unsafe_allow_html=True)
+    t_lines = [0.5, 1.5, 2.5, 3.5, 4.5]
+    cols_t = st.columns(5)
+    for i, l in enumerate(t_lines):
+        p_o, p_u = calcular_o_u(l_tarjetas, l)
+        cols_t[i].markdown(f'<div class="mkt-card"><small>{l}</small><br><b>O: {p_o:.1f}%</b><br><small style="color:#94a3b8">U: {p_u:.1f}%</small></div>', unsafe_allow_html=True)
 
-LEAGUE_ID = liga_sel["id"]
+with t3:
+    st.markdown('<div class="betplay-header">📍 MATRIZ DE MARCADORES EXACTOS</div>', unsafe_allow_html=True)
+    fig = px.imshow(matriz_vals, text_auto=".1f", color_continuous_scale='Greens', x=['0','1','2','3','4','5'], y=['0','1','2','3','4','5'])
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", margin=dict(l=0,r=0,t=0,b=0))
+    st.plotly_chart(fig, use_container_width=True)
 
-with st.spinner("Cargando equipos..."):
-    equipos = cached_obtener_equipos_liga(LEAGUE_ID, SEASON)
+with t4:
+    st.markdown('<div class="betplay-header">💰 COMPARADOR DE VALOR (STAKE DINÁMICO)</div>', unsafe_allow_html=True)
+    with st.expander("📝 CONFIGURAR CUOTAS BETPLAY", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        with c1: 
+            cuo_l = st.number_input(f"Cuota {local_obj['nombre']}", 1.0, 20.0, 2.0)
+            cuo_e = st.number_input("Cuota Empate", 1.0, 20.0, 3.2)
+            cuo_v = st.number_input(f"Cuota {visit_obj['nombre']}", 1.0, 20.0, 3.5)
+        with c2: 
+            cuo_1x = st.number_input("1X (Doble)", 1.0, 10.0, 1.3)
+            cuo_x2 = st.number_input("X2 (Doble)", 1.0, 10.0, 1.7)
+        with c3: 
+            cuo_bs = st.number_input("BTTS SÍ", 1.0, 10.0, 1.8)
+            cuo_bn = st.number_input("BTTS NO", 1.0, 10.0, 1.9)
+            bank = st.number_input("Bankroll ($)", value=100000)
 
-if not equipos or len(equipos) < 2:
-    st.error("❌ No hay suficientes equipos para esta liga.")
-    st.stop()
+    comparativa = [
+        {"Mercado": f"1 ({local_obj['nombre']})", "Prob": ph, "Cuota": cuo_l},
+        {"Mercado": "X (Empate)", "Prob": pe, "Cuota": cuo_e},
+        {"Mercado": f"2 ({visit_obj['nombre']})", "Prob": pa, "Cuota": cuo_v},
+        {"Mercado": "1X (Doble)", "Prob": ph + pe, "Cuota": cuo_1x},
+        {"Mercado": "X2 (Doble)", "Prob": pe + pa, "Cuota": cuo_x2},
+        {"Mercado": "BTTS SÍ", "Prob": prob_btts_si, "Cuota": cuo_bs},
+        {"Mercado": "BTTS NO", "Prob": prob_btts_no, "Cuota": cuo_bn},
+    ]
+    
+    df_b = pd.DataFrame(comparativa)
+    df_b["Edge %"] = ((df_b["Prob"] * df_b["Cuota"]) - 1) * 100
+    
+    # --- FIX DEL ERROR DE CLIP ---
+    def calcular_kelly(row):
+        k = (((row["Cuota"] * row["Prob"]) - 1) / (row["Cuota"] - 1)) * 0.25
+        return max(0, k) # Aquí reemplazamos .clip(lower=0)
 
-nombres = [e["nombre"] for e in equipos]
+    df_b["Kelly %"] = df_b.apply(calcular_kelly, axis=1)
+    df_b["Monto $"] = (df_b["Kelly %"] * bank).apply(lambda x: f"${int(x):,}")
 
-idx_local = 0
-idx_visita = 1 if len(nombres) > 1 else 0
+    # --- DISEÑO DE FILAS LLAMATIVAS ---
+    def highlight_rows(row):
+        if row["Edge %"] > 5: return ['background-color: rgba(0, 147, 69, 0.4)'] * len(row)
+        elif row["Edge %"] > 0: return ['background-color: rgba(0, 147, 69, 0.2)'] * len(row)
+        else: return ['background-color: rgba(220, 38, 38, 0.1)'] * len(row)
 
-local_nombre = st.sidebar.selectbox("🏠 Local", nombres, index=idx_local)
-visitante_nombre = st.sidebar.selectbox("✈️ Visitante", nombres, index=idx_visita)
+    st.table(df_b.style.apply(highlight_rows, axis=1).format({
+        "Prob": "{:.1%}", "Cuota": "{:.2f}", "Edge %": "{:.1f}%", "Kelly %": "{:.1%}"
+    }))
 
-if local_nombre == visitante_nombre:
-    st.warning("⚠️ Elige equipos distintos")
-    st.stop()
-
-local = next(e for e in equipos if e["nombre"] == local_nombre)
-visita = next(e for e in equipos if e["nombre"] == visitante_nombre)
-
-st.sidebar.markdown("---")
-bankroll = st.sidebar.number_input("💰 Bankroll", min_value=1.0, value=100.0, step=1.0)
-kelly_factor = st.sidebar.slider("⚖️ Factor Kelly", 0.0, 1.0, 0.5, 0.05)
-
-handicap_local = st.sidebar.selectbox("Hándicap Asiático Simple (Local)", [0, -0.5, +0.5])
-
-# =========================
-# Cargar partidos desde CSV
-# =========================
-with st.spinner("Cargando partidos desde CSV..."):
-    df_local_raw = obtener_partidos_con_cache(local["id"], LEAGUE_ID, SEASON)
-    df_visita_raw = obtener_partidos_con_cache(visita["id"], LEAGUE_ID, SEASON)
-
-df_local = preparar_df(df_local_raw, local_nombre)
-df_visita = preparar_df(df_visita_raw, visitante_nombre)
-
-# =========================
-# Promedios y forma
-# =========================
-lgf, lgc = promedios(df_local)
-vgf, vgc = promedios(df_visita)
-
-lgf5, lgc5 = forma_reciente(df_local, 5)
-vgf5, vgc5 = forma_reciente(df_visita, 5)
-
-lgf_mix = 0.7 * lgf + 0.3 * lgf5
-lgc_mix = 0.7 * lgc + 0.3 * lgc5
-vgf_mix = 0.7 * vgf + 0.3 * vgf5
-vgc_mix = 0.7 * vgc + 0.3 * vgc5
-
-lambda_local = max(0.1, (lgf_mix + vgc_mix) / 2)
-lambda_visita = max(0.1, (vgf_mix + lgc_mix) / 2)
-lambda_goles_total = lambda_local + lambda_visita
-
-# =========================
-# Probabilidades
-# =========================
-p_home, p_draw, p_away = calcular_1x2(lambda_local, lambda_visita)
-p_btts = prob_btts(lambda_local, lambda_visita)
-
-# =========================
-# Tabs
-# =========================
-tab_partido, tab_mercados, tab_totales, tab_value, tab_datos = st.tabs(
-    ["⚽ Partido", "📊 Mercados", "📈 Totales", "💰 Value & Kelly", "📄 Datos"]
-)
-
-with tab_partido:
-    st.subheader(f"{local_nombre} vs {visitante_nombre}")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        card("Local", f"{p_home*100:.1f}%", "Probabilidad", p_home)
-    with c2:
-        card("Empate", f"{p_draw*100:.1f}%", "Probabilidad", p_draw)
-    with c3:
-        card("Visitante", f"{p_away*100:.1f}%", "Probabilidad", p_away)
-
-with tab_mercados:
-    st.subheader("BTTS")
-    card("BTTS Sí", f"{p_btts*100:.1f}%", "Ambos marcan", p_btts)
-    card("BTTS No", f"{(1-p_btts)*100:.1f}%", "No ambos marcan", 1-p_btts)
-
-with tab_totales:
-    st.subheader("Totales de Goles (λ)")
-    card("Lambda Local", f"{lambda_local:.2f}")
-    card("Lambda Visitante", f"{lambda_visita:.2f}")
-    card("Lambda Total", f"{lambda_goles_total:.2f}")
-
-with tab_value:
-    st.info("Aquí luego metemos el cálculo de Value y Kelly con tus cuotas.")
-
-with tab_datos:
-    st.subheader("Debug CSV")
-    st.write("DF Local:")
-    st.write(df_local.head() if df_local is not None else "Vacío")
-    st.write("DF Visitante:")
-    st.write(df_visita.head() if df_visita is not None else "Vacío")
-    st.write("Columnas equipos:", df_equipos.columns.tolist())
-    st.write("Columnas partidos:", df_partidos.columns.tolist())
-
-st.info("💡 Usando solo datos locales desde CSV. No se consume API.")
+st.caption("v6.0 - Sistema de Alerta Visual Corregido | Pro Workstation 🇻🇪")
 
 
 
