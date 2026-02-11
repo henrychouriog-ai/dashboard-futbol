@@ -6,7 +6,11 @@ BASE_URL = "https://v3.football.api-sports.io"
 
 def _api_get(endpoint, params=None):
     # Forzamos la lectura de la key desde Secrets
-    key = st.secrets["general"]["api_key"]
+    try:
+        key = st.secrets["general"]["api_key"]
+    except:
+        return {"response": []} # Falla silenciosa si no hay key
+        
     headers = {"x-apisports-key": key, "Content-Type": "application/json"}
     try:
         r = requests.get(BASE_URL + endpoint, headers=headers, params=params, timeout=10)
@@ -28,14 +32,16 @@ def obtener_equipos_liga(league_id):
                    for t in data.get("response", [])], key=lambda x: x['nombre'])
 
 def obtener_promedios_goles(team_id, league_id):
-    # Si la API falla, devolveremos valores DISTINTOS para saber que no hay conexión
+    # Si la API falla, devolveremos 0.01 para saber que no hay conexión real
     data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 10})
     res = data.get("response", [])
-    if not res: return (0.01, 0.01) # Si ves 0.01 es que la API no respondió
+    
+    if not res: 
+        return (0.01, 0.01)
 
     g_f, g_c, p = 0, 0, 0
     for f in res:
-        gh, ga = f["goals"]["home"], f["goals"]["away"]
+        gh, ga = f.get("goals", {}).get("home"), f.get("goals", {}).get("away")
         if gh is None or ga is None: continue
         if f["teams"]["home"]["id"] == team_id:
             g_f += gh; g_c += ga
@@ -45,10 +51,25 @@ def obtener_promedios_goles(team_id, league_id):
     return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (0.01, 0.01)
 
 def obtener_h2h(id_local, id_visitante):
+    # Buscamos enfrentamientos directos sin importar la liga
     data = _api_get("/fixtures/headtohead", params={"h2h": f"{id_local}-{id_visitante}", "last": 5})
-    return [{"Fecha": f["fixture"]["date"][:10], "Marcador": f"{f['goals']['home']}-{f['goals']['away']}", 
-             "Ganador": "Local" if f['goals']['home'] > f['goals']['away'] else "Visita" if f['goals']['away'] > f['goals']['home'] else "Empate"} 
-            for f in data.get("response", [])]
+    
+    h2h_lista = []
+    for f in data.get("response", []):
+        gh, ga = f.get("goals", {}).get("home"), f.get("goals", {}).get("away")
+        if gh is None or ga is None: continue
+        
+        ganador = "Empate"
+        if gh > ga: ganador = f["teams"]["home"]["name"]
+        elif ga > gh: ganador = f["teams"]["away"]["name"]
+        
+        h2h_lista.append({
+            "Fecha": f["fixture"]["date"][:10],
+            "Equipos": f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}",
+            "Marcador": f"{gh}-{ga}",
+            "Ganador": ganador
+        })
+    return h2h_lista
 
 
 
