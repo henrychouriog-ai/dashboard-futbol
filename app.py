@@ -78,10 +78,12 @@ with st.sidebar:
         st.markdown(f'<div style="text-align: center; margin-bottom:15px;"><img src="{liga_sel.get("logo", "")}" width="45"></div>', unsafe_allow_html=True)
 
         equipos = api.obtener_equipos_liga(liga_sel['id'])
-        # Usamos keys basadas en la liga para forzar refresco de datos
-        local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'], key=f"L_{liga_sel['id']}")
-        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'], key=f"V_{liga_sel['id']}")
         
+        # FIX: Clave dinámica por liga para forzar refresco
+        local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'], key=f"local_{liga_sel['id']}")
+        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'], key=f"visit_{liga_sel['id']}")
+        
+        # FIX: Obtención directa de datos frescos
         xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
         xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
         l_h, l_a = (xh_f + xa_c) / 2, (xa_f + xh_c) / 2
@@ -144,12 +146,12 @@ with t1:
     with c3: st.markdown(f'<div class="mkt-card"><small>{visit_obj["nombre"].upper()}</small><h2 style="color:#009345;">{pa*100:.1f}%</h2></div>', unsafe_allow_html=True)
     with c4: st.markdown(f'<div class="mkt-card"><small>{btts_label}</small><h2 style="color:#009345;">{btts_perc*100:.1f}%</h2></div>', unsafe_allow_html=True)
 
-    # --- NUEVA SECCIÓN H2H SOLICITADA ---
     st.markdown('<div class="betplay-header">⚔️ ÚLTIMOS ENFRENTAMIENTOS DIRECTOS (H2H)</div>', unsafe_allow_html=True)
+    # FIX: Llamada directa a H2H con los IDs actuales
     h2h_data = api.obtener_h2h(local_obj['id'], visit_obj['id'])
     if h2h_data:
         df_h2h = pd.DataFrame(h2h_data)
-        st.dataframe(df_h2h, use_container_width=True, hide_index=True)
+        st.table(df_h2h) # Usamos table para asegurar visibilidad en todas las resoluciones
     else:
         st.info("No se registran enfrentamientos recientes entre estos equipos.")
 
