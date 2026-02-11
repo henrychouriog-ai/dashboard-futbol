@@ -1,5 +1,4 @@
 import os
-import time
 import json
 import requests
 import streamlit as st
@@ -8,7 +7,6 @@ import streamlit as st
 # CONFIGURACIÓN
 # =========================
 def obtener_api_key():
-    # Intenta obtenerla de Streamlit Secrets o ponla aquí directamente entre comillas
     try:
         return st.secrets["general"]["api_key"]
     except:
@@ -18,20 +16,21 @@ BASE_URL = "https://v3.football.api-sports.io"
 CACHE_DIR = "cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-# --- Función de limpieza para el usuario ---
 def limpiar_cache_completo():
-    for f in os.listdir(CACHE_DIR):
-        os.remove(os.path.join(CACHE_DIR, f))
+    if os.path.exists(CACHE_DIR):
+        for f in os.listdir(CACHE_DIR):
+            try:
+                os.remove(os.path.join(CACHE_DIR, f))
+            except:
+                pass
 
-# --- Motor de peticiones ---
 def _api_get(endpoint, params=None):
     key = obtener_api_key()
     headers = {"x-apisports-key": key, "Content-Type": "application/json"}
     try:
-        r = requests.get(BASE_URL + endpoint, headers=headers, params=params, timeout=7)
+        r = requests.get(BASE_URL + endpoint, headers=headers, params=params, timeout=10)
         return r.json()
     except Exception as e:
-        print(f"Error de conexión: {e}")
         return {"response": []}
 
 # =========================
@@ -39,7 +38,6 @@ def _api_get(endpoint, params=None):
 # =========================
 
 def obtener_ligas():
-    # Usamos caché para que el selector sea instantáneo
     cache_path = os.path.join(CACHE_DIR, "ligas_cache.json")
     if os.path.exists(cache_path):
         with open(cache_path, "r") as f: return json.load(f)
@@ -47,12 +45,12 @@ def obtener_ligas():
     data = _api_get("/leagues")
     ligas = []
     for l in data.get("response", []):
+        # Filtramos solo ligas que tengan temporada 2024 o 2025 activa
         ligas.append({
             "id": l["league"]["id"],
             "nombre": f"{l['country']['name']} - {l['league']['name']}",
             "logo": l["league"]["logo"],
-            "solo_nombre": l["league"]["name"],
-            "pais": l["country"]["name"]
+            "solo_nombre": l["league"]["name"]
         })
     
     if ligas:
@@ -60,15 +58,11 @@ def obtener_ligas():
     return ligas
 
 def obtener_equipos_liga(league_id):
-    # Evitamos llamadas repetitivas
     cache_path = os.path.join(CACHE_DIR, f"equipos_{league_id}.json")
     if os.path.exists(cache_path):
         with open(cache_path, "r") as f: return json.load(f)
 
-    # Usamos 2025 directamente para ganar velocidad
     data = _api_get("/teams", params={"league": league_id, "season": 2025})
-    
-    # Si 2025 no tiene datos, intentamos 2024 automáticamente
     if not data.get("response"):
         data = _api_get("/teams", params={"league": league_id, "season": 2024})
 
@@ -81,22 +75,21 @@ def obtener_equipos_liga(league_id):
         })
     
     if equipos:
+        equipos = sorted(equipos, key=lambda x: x['nombre'])
         with open(cache_path, "w") as f: json.dump(equipos, f)
     return equipos
 
 def obtener_promedios_goles(team_id, league_id):
-    # Intentamos obtener los últimos 10 partidos para las métricas
-    data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2025, "last": 10})
-    
-    # Si 2025 está vacío, probamos 2024
+    # Forzamos búsqueda fresca para evitar que los datos se queden pegados
+    data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2025, "last": 15})
     if not data.get("response"):
-        data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 10})
+        data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 15})
 
     g_f, g_c, p = 0, 0, 0
     responses = data.get("response", [])
     
     if not responses:
-        return (1.55, 1.25) # Datos de relleno para que no se dañe la visual
+        return (1.20, 1.10) # Fallback si no hay datos
 
     for f in responses:
         gh, ga = f["goals"]["home"], f["goals"]["away"]
@@ -108,7 +101,27 @@ def obtener_promedios_goles(team_id, league_id):
             g_f += ga; g_c += gh
         p += 1
     
-    return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (1.50, 1.20)
+    return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (1.20, 1.10)
+
+def obtener_h2h(id_local, id_visitante):
+    # Obtiene los enfrentamientos directos entre ambos
+    h2h_id = f"{id_local}-{id_visitante}"
+    data = _api_get("/fixtures/headtohead", params={"h2h": h2h_id, "last": 5})
+    
+    resultados = []
+    for f in data.get("response", []):
+        gh, ga = f["goals"]["home"], f["goals"]["away"]
+        ganador = "Empate"
+        if gh > ga: ganador = f["teams"]["home"]["name"]
+        elif ga > gh: ganador = f["teams"]["away"]["name"]
+        
+        resultados.append({
+            "fecha": f["fixture"]["date"][:10],
+            "marcador": f"{gh}-{ga}",
+            "detalle": f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}",
+            "ganador": ganador
+        })
+    return resultados
 
 
 
