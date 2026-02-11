@@ -1,5 +1,4 @@
 import os
-import json
 import requests
 import streamlit as st
 
@@ -8,13 +7,13 @@ import streamlit as st
 # =========================
 def obtener_api_key():
     try:
+        # Intenta sacarla de Streamlit Secrets
         return st.secrets["general"]["api_key"]
     except:
+        # Si falla, busca la variable local
         return "TU_API_KEY_AQUI" 
 
 BASE_URL = "https://v3.football.api-sports.io"
-CACHE_DIR = "cache"
-os.makedirs(CACHE_DIR, exist_ok=True)
 
 def _api_get(endpoint, params=None):
     key = obtener_api_key()
@@ -25,54 +24,63 @@ def _api_get(endpoint, params=None):
     except Exception as e:
         return {"response": []}
 
-# --- FUNCIONES EXISTENTES ---
+# =========================
+# FUNCIONES SIN BLOQUEO DE CACHÉ
+# =========================
 
+@st.cache_data(ttl=3600) # Solo guarda las ligas por 1 hora
 def obtener_ligas():
-    cache_path = os.path.join(CACHE_DIR, "ligas_cache.json")
-    if os.path.exists(cache_path):
-        with open(cache_path, "r") as f: return json.load(f)
     data = _api_get("/leagues")
     ligas = []
     for l in data.get("response", []):
         ligas.append({
             "id": l["league"]["id"],
             "nombre": f"{l['country']['name']} - {l['league']['name']}",
-            "logo": l["league"]["logo"],
-            "solo_nombre": l["league"]["name"]
+            "logo": l["league"]["logo"]
         })
-    if ligas:
-        with open(cache_path, "w") as f: json.dump(ligas, f)
     return ligas
 
+@st.cache_data(ttl=600) # Guarda los equipos por 10 minutos
 def obtener_equipos_liga(league_id):
-    cache_path = os.path.join(CACHE_DIR, f"equipos_{league_id}.json")
-    if os.path.exists(cache_path):
-        with open(cache_path, "r") as f: return json.load(f)
-    data = _api_get("/teams", params={"league": league_id, "season": 2024})
+    # Intentamos temporada 2025 y si no 2024
+    data = _api_get("/teams", params={"league": league_id, "season": 2025})
+    if not data.get("response"):
+        data = _api_get("/teams", params={"league": league_id, "season": 2024})
+
     equipos = []
     for t in data.get("response", []):
-        equipos.append({"id": t["team"]["id"], "nombre": t["team"]["name"], "logo": t["team"]["logo"]})
-    if equipos:
-        with open(cache_path, "w") as f: json.dump(equipos, f)
-    return equipos
+        equipos.append({
+            "id": t["team"]["id"], 
+            "nombre": t["team"]["name"],
+            "logo": t["team"]["logo"]
+        })
+    return sorted(equipos, key=lambda x: x['nombre'])
 
 def obtener_promedios_goles(team_id, league_id):
-    data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 15})
+    # Buscamos los últimos 15 partidos para mayor precisión
+    params = {"team": team_id, "league": league_id, "last": 15}
+    data = _api_get("/fixtures", params=params)
+
     g_f, g_c, p = 0, 0, 0
     responses = data.get("response", [])
-    if not responses: return (1.20, 1.10)
+    
+    if not responses:
+        return (1.30, 1.10) # Valores neutros si no hay datos
+
     for f in responses:
         gh, ga = f["goals"]["home"], f["goals"]["away"]
         if gh is None or ga is None: continue
+        
         if f["teams"]["home"]["id"] == team_id:
             g_f += gh; g_c += ga
         else:
             g_f += ga; g_c += gh
         p += 1
-    return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (1.20, 1.10)
+    
+    return (round(g_f/p, 2), round(g_c/p, 2)) if p > 0 else (1.30, 1.10)
 
-# --- ESTA ES LA FUNCIÓN QUE TE DABA EL ERROR (AGRÉGALA) ---
 def obtener_h2h(id_local, id_visitante):
+    # Esta es la función que te faltaba
     h2h_query = f"{id_local}-{id_visitante}"
     data = _api_get("/fixtures/headtohead", params={"h2h": h2h_query, "last": 5})
     
@@ -84,16 +92,11 @@ def obtener_h2h(id_local, id_visitante):
         elif ga > gh: ganador = f["teams"]["away"]["name"]
         
         resultados.append({
-            "fecha": f["fixture"]["date"][:10],
-            "marcador": f"{gh}-{ga}",
-            "ganador": ganador
+            "Fecha": f["fixture"]["date"][:10],
+            "Marcador": f"{gh}-{ga}",
+            "Ganador": ganador
         })
     return resultados
-
-def limpiar_cache_completo():
-    if os.path.exists(CACHE_DIR):
-        for f in os.listdir(CACHE_DIR):
-            os.remove(os.path.join(CACHE_DIR, f))
 
 
 
