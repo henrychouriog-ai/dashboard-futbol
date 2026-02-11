@@ -2,30 +2,22 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import api  
+import api  # Asegúrate de haber subido el api.py que te pasé antes
 import math
 
-# ==========================================
-# 🎨 CONFIGURACIÓN Y ESTILO v6.7 (MÓVIL PRO)
-# ==========================================
-st.set_page_config(page_title="BETPLAY AI ANALYZER", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="BETPLAY AI", layout="wide")
 
+# --- TUS ESTILOS ORIGINALES ---
 st.markdown("""
     <style>
     [data-testid="stAppViewContainer"] { background-color: #050a14; }
-    .stTabs [data-baseweb="tab"] { font-size: 12px; padding: 10px; }
-    .mkt-card { 
-        background: #0e1629; padding: 15px; border-radius: 12px; 
-        border: 1px solid #1e293b; text-align: center; margin-bottom: 10px;
+    .main-header {
+        background: linear-gradient(90deg, #004a99 0%, #050a14 100%);
+        padding: 20px; border-radius: 10px; border-bottom: 4px solid #009345;
+        text-align: center; margin-bottom: 20px;
     }
-    .betplay-header {
-        background-color: #004a99; color: white; padding: 10px; 
-        border-radius: 8px; border-left: 5px solid #009345; margin: 15px 0;
-    }
-    .match-banner {
-        background: linear-gradient(135deg, #004a99 0%, #050a14 100%);
-        padding: 20px; border-radius: 20px; text-align: center; border-bottom: 5px solid #009345;
-    }
+    .stMetric { background-color: #0e1629; padding: 10px; border-radius: 10px; border: 1px solid #1e293b; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -33,40 +25,44 @@ def poisson_prob(lmbda, k):
     if lmbda <= 0: return 1.0 if k == 0 else 0.0
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
-# ==========================================
-# 🛠️ SIDEBAR - CONTROL DE EQUIPOS
-# ==========================================
+# --- SIDEBAR ---
 with st.sidebar:
-    st.title("⚽ BETPLAY AI")
-    if st.button("🔄 REFRESCAR TODO"):
-        api.limpiar_cache_completo()
+    st.image("https://upload.wikimedia.org/wikipedia/commons/1/13/Logo_de_la_Liga_Futve.png", width=100) # O tu logo
+    st.title("BETPLAY AI")
+    
+    # Botón para forzar actualización si algo se pega
+    if st.button("🔄 RECARGAR DATOS"):
+        st.cache_data.clear()
         st.rerun()
 
     ligas = api.obtener_ligas()
     if ligas:
-        liga_sel = st.selectbox("Liga", ligas, format_func=lambda x: x['nombre'])
+        # Quitamos códigos raros del nombre
+        liga_sel = st.selectbox("Selecciona Liga", ligas, format_func=lambda x: x['nombre'])
         equipos = api.obtener_equipos_liga(liga_sel['id'])
         
-        # Keys únicas para forzar el cambio de datos
-        local_obj = st.selectbox("🏠 Local", equipos, index=0, key="L1")
-        visit_obj = st.selectbox("✈️ Visita", equipos, index=1 if len(equipos)>1 else 0, key="V1")
+        # IMPORTANTE: El 'key' dinámico asegura que los datos cambien
+        col1, col2 = st.columns(2)
+        with col1:
+            local_obj = st.selectbox("🏠 Local", equipos, format_func=lambda x: x['nombre'], key=f"L_{liga_sel['id']}")
+        with col2:
+            visit_obj = st.selectbox("✈️ Visita", equipos, index=1 if len(equipos)>1 else 0, format_func=lambda x: x['nombre'], key=f"V_{liga_sel['id']}")
         
-        # OBTENCIÓN DE DATOS DINÁMICOS
+        # Obtener promedios reales
         xhf, xhc = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
         xaf, xac = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
         
-        # Lambdas calculadas al momento
+        # Expectativas de goles (Lambdas)
         lh, la = (xhf + xac)/2, (xaf + xhc)/2
         
         st.divider()
-        l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
-        l_cards = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.5)
+        l_corners = st.slider("Córners Previstos", 6.0, 16.0, 9.5)
+        l_cards = st.slider("Tarjetas Previstas", 0.0, 10.0, 4.5)
     else:
+        st.error("No se pudieron cargar las ligas.")
         st.stop()
 
-# ==========================================
-# 📊 CÁLCULOS EN TIEMPO REAL
-# ==========================================
+# --- MOTOR DE CÁLCULO ---
 ph, pe, pa = 0, 0, 0
 matriz_vals = np.zeros((6, 6))
 for i in range(6):
@@ -77,56 +73,60 @@ for i in range(6):
         elif i == j: pe += prob
         else: pa += prob
 
-# ==========================================
-# 🏟️ DASHBOARD MÓVIL
-# ==========================================
+# --- CUERPO PRINCIPAL (DISEÑO RESTAURADO) ---
 st.markdown(f"""
-    <div class="match-banner">
-        <h3 style="color:white; margin:0;">{local_obj['nombre']} vs {visit_obj['nombre']}</h3>
-        <p style="color:#009345; font-size:12px;">{liga_sel['solo_nombre']}</p>
+    <div class="main-header">
+        <img src="{liga_sel['logo']}" width="50"><br>
+        <h1 style="color:white; margin:0;">{local_obj['nombre']} vs {visit_obj['nombre']}</h1>
+        <p style="color:#009345;">{liga_sel['nombre']}</p>
     </div>
 """, unsafe_allow_html=True)
 
-t1, t2, t3, t4 = st.tabs(["📊 ANALISIS", "🎯 LINEAS", "🏁 MATRIZ", "💰 VALUE"])
+# Reinstauramos tus pestañas originales
+t1, t2, t3, t4 = st.tabs(["📈 PROYECCIONES", "🎯 LÍNEAS O/U", "📊 MATRIZ", "💰 COMPARADOR"])
 
 with t1:
-    st.markdown('<div class="betplay-header">Probabilidades 1X2</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
-    c1.markdown(f'<div class="mkt-card"><small>1</small><br><b style="color:#009345;">{ph*100:.1f}%</b></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="mkt-card"><small>X</small><br><b style="color:#009345;">{pe*100:.1f}%</b></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="mkt-card"><small>2</small><br><b style="color:#009345;">{pa*100:.1f}%</b></div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="betplay-header">⚔️ ENFRENTAMIENTOS H2H</div>', unsafe_allow_html=True)
-    h2h_list = api.obtener_h2h(local_obj['id'], visit_obj['id'])
-    if h2h_list:
-        for m in h2h_list:
-            st.markdown(f"**{m['fecha']}**: {m['marcador']} → *Ganador: {m['ganador']}*")
+    c1.metric(f"Vitoria {local_obj['nombre']}", f"{ph*100:.1f}%")
+    c2.metric("Empate", f"{pe*100:.1f}%")
+    c3.metric(f"Victoria {visit_obj['nombre']}", f"{pa*100:.1f}%")
+    
+    st.subheader("⚔️ Enfrentamientos Directos (H2H)")
+    h2h_data = api.obtener_h2h(local_obj['id'], visit_obj['id'])
+    if h2h_data:
+        st.table(pd.DataFrame(h2h_data))
     else:
-        st.write("No hay enfrentamientos recientes registrados.")
+        st.info("Sin datos de enfrentamientos previos.")
 
 with t2:
-    st.markdown('<div class="betplay-header">⚽ GOLES TOTALES</div>', unsafe_allow_html=True)
-    for line in [1.5, 2.5, 3.5]:
-        p_under = sum(poisson_prob(lh+la, k) for k in range(int(line) + 1))
-        st.write(f"**Línea {line}:** Over {(1-p_under)*100:.1f}% | Under {p_under*100:.1f}%")
+    st.subheader("🎯 Probabilidades de Goles")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        for line in [0.5, 1.5, 2.5, 3.5]:
+            p_under = sum(poisson_prob(lh+la, k) for k in range(int(line) + 1))
+            st.write(f"**Over {line}:** {(1-p_under)*100:.1f}%")
+    with col_b:
+        for line in [0.5, 1.5, 2.5, 3.5]:
+            p_under = sum(poisson_prob(lh+la, k) for k in range(int(line) + 1))
+            st.write(f"**Under {line}:** {p_under*100:.1f}%")
 
 with t3:
     fig = px.imshow(matriz_vals, text_auto=".1f", color_continuous_scale='Greens',
-                    x=['0','1','2','3','4','5'], y=['0','1','2','3','4','5'],
-                    labels=dict(x="Visita", y="Local", color="%"))
-    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
+                    x=['0','1','2','3','4','5'], y=['0','1','2','3','4','5'])
     st.plotly_chart(fig, use_container_width=True)
 
 with t4:
-    st.info("Ingresa la cuota de tu casa de apuestas para ver si hay valor (Edge).")
-    cuota_casa = st.number_input("Cuota Local", 1.1, 10.0, 2.0)
-    edge = (ph * cuota_casa) - 1
+    st.subheader("💰 Calculadora de Valor (Kelly Criterion)")
+    cuota_local = st.number_input("Cuota Local en Casa de Apuestas", 1.01, 20.0, 2.0)
+    prob_real = ph
+    edge = (prob_real * cuota_local) - 1
+    
     if edge > 0:
-        st.success(f"¡VALOR DETECTADO! Edge: {edge*100:.2f}%")
+        st.success(f"VALOR ENCONTRADO: {edge*100:.2f}%")
+        kelly = (edge / (cuota_local - 1)) * 100
+        st.write(f"Stake recomendado (Kelly): **{kelly/4:.2f}%** del bank.")
     else:
-        st.error(f"Sin valor. Edge: {edge*100:.2f}%")
-
-st.caption("v6.7 Pro - Optimizado para Chrome Mobile")
+        st.error(f"No hay valor. Edge: {edge*100:.2f}%")
 
 
 
