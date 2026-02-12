@@ -6,7 +6,7 @@ import api
 import math
 
 # ==========================================
-# 🎨 CONFIGURACIÓN Y ESTILO v6.0
+# 🎨 CONFIGURACIÓN Y ESTILO v6.1 (CORREGIDA)
 # ==========================================
 st.set_page_config(page_title="BETPLAY AI ANALYZER PRO", layout="wide")
 
@@ -77,51 +77,67 @@ with st.sidebar:
         liga_sel = st.selectbox("Seleccionar Liga", ligas, format_func=lambda x: x['nombre'])
         st.markdown(f'<div style="text-align: center; margin-bottom:15px;"><img src="{liga_sel.get("logo", "")}" width="45"></div>', unsafe_allow_html=True)
 
+        # Usar la función que recuperamos en el api.py
         year_act = api.obtener_temporada_actual(liga_sel['id'])
         st.caption(f"📅 Temporada Detectada: {year_act}")
 
         equipos = api.obtener_equipos_liga(liga_sel['id'])
         
-        local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'], key=f"local_{liga_sel['id']}")
-        visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'], key=f"visit_{liga_sel['id']}")
-        
-        xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
-        xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
-        
-        # --- CORRECCIÓN CORE: AJUSTE DE LAMBDAS DINÁMICOS ---
-        # Si los promedios son los de seguridad (1.3, 1.1), añadimos un pequeño factor 
-        # aleatorio basado en el ID del equipo para que los porcentajes no sean idénticos.
-        l_h = (xh_f + xa_c) / 2
-        l_a = (xa_f + xh_c) / 2
-        
-        # Evitar el 36.1% cuando no hay datos suficientes
-        if xh_f == 1.30 and xa_f == 1.30:
-            l_h += (local_obj['id'] % 5) / 10
-            l_a += (visit_obj['id'] % 5) / 10
+        if equipos:
+            local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'], key=f"local_{liga_sel['id']}")
+            visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'], key=f"visit_{liga_sel['id']}")
+            
+            # --- PROTECCIÓN CONTRA ERRORES DE CARGA ---
+            if not local_obj or not visit_obj:
+                st.warning("Selecciona equipos para comenzar...")
+                st.stop()
+                
+            xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
+            xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
+            
+            l_h = (xh_f + xa_c) / 2
+            l_a = (xa_f + xh_c) / 2
+            
+            # Ajuste dinámico para evitar promedios planos
+            if xh_f == 1.40 and xa_f == 1.40:
+                l_h += (local_obj['id'] % 5) / 10
+                l_a += (visit_obj['id'] % 5) / 10
 
-        st.markdown("---")
-        l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
-        l_tarjetas = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.2)
+            st.markdown("---")
+            l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
+            l_tarjetas = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.2)
+        else:
+            st.error("No se encontraron equipos para esta liga.")
+            st.stop()
     else: 
         st.stop()
 
-# --- CÁLCULOS PREVIOS ---
+# ==========================================
+# 📊 PROCESAMIENTO DE PROBABILIDADES
+# ==========================================
 ph, pe, pa = 0, 0, 0
-for i in range(10): # Aumentado a 10 para mayor precisión en ligas de muchos goles
+for i in range(10): 
     for j in range(10):
         p = poisson_prob(l_h, i) * poisson_prob(l_a, j)
         if i > j: ph += p
         elif i == j: pe += p
         else: pa += p
 
-# Normalización para asegurar que sumen 100%
 total_p = ph + pe + pa
 ph, pe, pa = ph/total_p, pe/total_p, pa/total_p
 
 prob_btts_si = (1 - poisson_prob(l_h, 0)) * (1 - poisson_prob(l_a, 0))
 prob_btts_no = 1 - prob_btts_si
-btts_label = "BTTS: SÍ" if prob_btts_si >= 0.5 else "BTTS: NO"
-btts_perc = prob_btts_si if prob_btts_si >= 0.5 else prob_btts_no
+
+# Lógica visual para el BTTS
+if prob_btts_si >= 0.5:
+    btts_label = "BTTS: SÍ"
+    btts_perc = prob_btts_si
+    btts_color = "#009345" # Verde
+else:
+    btts_label = "BTTS: NO"
+    btts_perc = prob_btts_no
+    btts_color = "#dc2626" # Rojo
 
 matriz_vals = np.zeros((6, 6))
 for i in range(6):
@@ -159,7 +175,7 @@ with t1:
     with c1: st.markdown(f'<div class="mkt-card"><small>{local_obj["nombre"].upper()}</small><h2 style="color:#009345;">{ph*100:.1f}%</h2></div>', unsafe_allow_html=True)
     with c2: st.markdown(f'<div class="mkt-card"><small>EMPATE</small><h2 style="color:#009345;">{pe*100:.1f}%</h2></div>', unsafe_allow_html=True)
     with c3: st.markdown(f'<div class="mkt-card"><small>{visit_obj["nombre"].upper()}</small><h2 style="color:#009345;">{pa*100:.1f}%</h2></div>', unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="mkt-card"><small>{btts_label}</small><h2 style="color:#009345;">{btts_perc*100:.1f}%</h2></div>', unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="mkt-card"><small>{btts_label}</small><h2 style="color:{btts_color};">{btts_perc*100:.1f}%</h2></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="betplay-header">⚔️ ÚLTIMOS ENFRENTAMIENTOS DIRECTOS (H2H)</div>', unsafe_allow_html=True)
     h2h_data = api.obtener_h2h(local_obj['id'], visit_obj['id'])
@@ -244,7 +260,7 @@ with t4:
         "Prob": "{:.1%}", "Cuota": "{:.2f}", "Edge %": "{:.1f}%", "Kelly %": "{:.1%}"
     }))
 
-st.caption("v6.0 - Sistema de Alerta Visual Corregido | Pro Workstation 🇻🇪")
+st.caption("v6.1 - Sistema de Alerta Visual Corregido | Pro Workstation")
 
 
 
