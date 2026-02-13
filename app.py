@@ -6,7 +6,7 @@ import api
 import math
 
 # ==========================================
-# 🎨 CONFIGURACIÓN Y ESTILO v6.1 (TOTALMENTE RESTAURADO)
+# 🎨 CONFIGURACIÓN Y ESTILO v6.1 (RESTAURADO)
 # ==========================================
 st.set_page_config(page_title="BETPLAY AI ANALYZER PRO", layout="wide")
 
@@ -83,9 +83,11 @@ with st.sidebar:
             local_obj = st.selectbox("🏠 Local", equipos, index=0, format_func=lambda x: x['nombre'])
             visit_obj = st.selectbox("✈️ Visitante", equipos, index=1 if len(equipos) > 1 else 0, format_func=lambda x: x['nombre'])
             
+            # Obtención de datos reales
             xh_f, xh_c = api.obtener_promedios_goles(local_obj['id'], liga_sel['id'])
             xa_f, xa_c = api.obtener_promedios_goles(visit_obj['id'], liga_sel['id'])
             
+            # Cálculo de Lambdas (Expectativa de goles)
             l_h = (xh_f + xa_c) / 2
             l_a = (xa_f + xh_c) / 2
             
@@ -93,12 +95,12 @@ with st.sidebar:
             l_corners = st.slider("Expectativa Córners", 5.0, 15.0, 9.5)
             l_tarjetas = st.slider("Expectativa Tarjetas", 0.0, 10.0, 4.2)
         else:
-            st.error("⚠️ No se encontraron equipos. Intenta con otra liga.")
+            st.error("⚠️ No se encontraron equipos para esta temporada.")
             st.stop()
     else: 
         st.stop()
 
-# --- PROCESAMIENTO ---
+# --- PROCESAMIENTO MATEMÁTICO ---
 ph, pe, pa = 0, 0, 0
 for i in range(10):
     for j in range(10):
@@ -122,7 +124,7 @@ for i in range(6):
         matriz_vals[i, j] = poisson_prob(l_h, i) * poisson_prob(l_a, j) * 100
 
 # ==========================================
-# 🏟️ DASHBOARD (IDÉNTICO AL 6.0)
+# 🏟️ DASHBOARD PRINCIPAL
 # ==========================================
 st.markdown(f"""
     <div class="match-banner">
@@ -173,38 +175,57 @@ with t2:
     c1, c2 = st.columns(2)
     with c1:
         p_o, p_u = calcular_o_u(l_corners, 9.5)
-        st.markdown(f'<div class="mkt-card">CÓRNERS (9.5)<br><b>O: {p_o:.1f}%</b></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="mkt-card">CÓRNERS (9.5)<br><b>O: {p_o:.1f}%</b><br><small style="color:#94a3b8">U: {p_u:.1f}%</small></div>', unsafe_allow_html=True)
     with c2:
         p_o, p_u = calcular_o_u(l_tarjetas, 4.5)
-        st.markdown(f'<div class="mkt-card">TARJETAS (4.5)<br><b>O: {p_o:.1f}%</b></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="mkt-card">TARJETAS (4.5)<br><b>O: {p_o:.1f}%</b><br><small style="color:#94a3b8">U: {p_u:.1f}%</small></div>', unsafe_allow_html=True)
 
 with t3:
+    st.markdown('<div class="betplay-header">📍 MATRIZ DE MARCADORES EXACTOS</div>', unsafe_allow_html=True)
     fig = px.imshow(matriz_vals, text_auto=".1f", color_continuous_scale='Greens', x=['0','1','2','3','4','5'], y=['0','1','2','3','4','5'])
-    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0,r=0,t=0,b=0))
     st.plotly_chart(fig, use_container_width=True)
 
 with t4:
-    st.markdown('<div class="betplay-header">💰 COMPARADOR DE VALOR (STAKE DINÁMICO)</div>', unsafe_allow_html=True)
-    with st.expander("📝 CONFIGURAR CUOTAS", expanded=True):
+    st.markdown('<div class="betplay-header">💰 COMPARADOR DE VALOR Y STAKE DINÁMICO</div>', unsafe_allow_html=True)
+    with st.expander("📝 CONFIGURAR CUOTAS BETPLAY", expanded=True):
         c1, c2, c3 = st.columns(3)
-        cuo_l = c1.number_input(f"Cuota {local_obj['nombre']}", 1.0, 20.0, 2.0)
-        cuo_e = c1.number_input("Cuota Empate", 1.0, 20.0, 3.2)
-        cuo_v = c1.number_input(f"Cuota {visit_obj['nombre']}", 1.0, 20.0, 3.5)
-        cuo_bs = c2.number_input("BTTS SÍ", 1.0, 10.0, 1.8)
-        bank = c3.number_input("Bankroll ($)", value=100000)
+        cuo_l = c1.number_input(f"Cuota {local_obj['nombre']}", 1.0, 20.0, 2.0, step=0.01)
+        cuo_e = c1.number_input("Cuota Empate", 1.0, 20.0, 3.2, step=0.01)
+        cuo_v = c1.number_input(f"Cuota {visit_obj['nombre']}", 1.0, 20.0, 3.5, step=0.01)
+        
+        cuo_bs = c2.number_input("BTTS SÍ", 1.0, 10.0, 1.8, step=0.01)
+        cuo_bn = c2.number_input("BTTS NO", 1.0, 10.0, 1.9, step=0.01)
+        
+        bank = c3.number_input("Bankroll Actual ($)", value=100000)
 
     comparativa = [
         {"Mercado": "1 (Local)", "Prob": ph, "Cuota": cuo_l},
         {"Mercado": "X (Empate)", "Prob": pe, "Cuota": cuo_e},
         {"Mercado": "2 (Visita)", "Prob": pa, "Cuota": cuo_v},
         {"Mercado": "BTTS SÍ", "Prob": prob_btts_si, "Cuota": cuo_bs},
+        {"Mercado": "BTTS NO", "Prob": prob_btts_no, "Cuota": cuo_bn},
     ]
+    
     df_b = pd.DataFrame(comparativa)
     df_b["Edge %"] = ((df_b["Prob"] * df_b["Cuota"]) - 1) * 100
-    df_b["Monto $"] = (df_b["Edge %"] * 0.01 * bank).clip(lower=0).apply(lambda x: f"${int(x):,}")
-    st.table(df_b)
+    
+    # Cálculo de Stake Dinámico basado en Edge y Probabilidad
+    def calcular_monto(row):
+        if row["Edge %"] > 0:
+            # Kelly simplificado (Stake proporcional al Edge)
+            stake = (row["Edge %"] / 100) * (bank * 0.1) 
+            return int(stake)
+        return 0
 
-st.caption("v6.1 - Estabilización de Motor | 2026")
+    df_b["Stake Sugerido $"] = df_b.apply(calcular_monto, axis=1).apply(lambda x: f"${x:,}")
+    
+    # Formateo de tabla
+    st.table(df_b.style.format({
+        "Prob": "{:.1%}", "Cuota": "{:.2f}", "Edge %": "{:.1f}%"
+    }))
+
+st.caption("v6.1 - Sistema de Búsqueda 2026 Activo | Motor Estabilizado")
 
 
 
