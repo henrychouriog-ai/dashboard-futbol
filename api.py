@@ -6,79 +6,84 @@ BASE_URL = "https://v3.football.api-sports.io"
 
 def _api_get(endpoint, params=None):
     try:
-        if "general" in st.secrets and "api_key" in st.secrets["general"]:
-            key = st.secrets["general"]["api_key"]
-        else:
-            return {"response": []}
-            
+        # Intenta obtener la clave de los secrets de Streamlit
+        key = st.secrets["general"]["api_key"]
         headers = {"x-apisports-key": key, "Content-Type": "application/json"}
+        # Agregamos un timestamp para evitar que la API nos devuelva datos viejos (cache)
         if params is None: params = {}
-        params["_t"] = int(time.time()) # Evita caché vieja
+        params["v"] = int(time.time())
         
         r = requests.get(BASE_URL + endpoint, headers=headers, params=params, timeout=10)
         return r.json()
-    except:
+    except Exception as e:
+        print(f"Error de conexión: {e}")
         return {"response": []}
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def obtener_ligas():
-    # Volvemos a traer TODAS las ligas del mundo
     data = _api_get("/leagues")
-    response = data.get("response", [])
-    if not response:
-        return [{"id": 140, "nombre": "La Liga (Spain)", "logo": "https://media.api-sports.io/football/leagues/140.png"}]
+    res = data.get("response", [])
+    if not res:
+        # Ligas de respaldo si la API falla totalmente
+        return [{"id": 140, "nombre": "La Liga (Spain)", "logo": ""}, {"id": 39, "nombre": "Premier (England)", "logo": ""}]
     
     lista = []
-    for l in response:
-        lista.append({
-            "id": l["league"]["id"], 
-            "nombre": f"{l['league']['name']} ({l['country']['name']})", 
-            "logo": l["league"].get("logo", "")
-        })
+    for item in res:
+        l = item["league"]
+        c = item["country"]
+        lista.append({"id": l["id"], "nombre": f"{l['name']} ({c['name']})", "logo": l.get("logo", "")})
     return sorted(lista, key=lambda x: x['nombre'])
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def obtener_equipos_liga(league_id):
-    # Intentamos 2025 (Temporada actual en 2026) y luego 2024
-    for yr in [2025, 2024]:
-        data = _api_get("/teams", params={"league": league_id, "season": yr})
+    # BUSQUEDA EN CASCADA: Intenta 2026, luego 2025, luego 2024
+    for temporada in [2026, 2025, 2024]:
+        data = _api_get("/teams", params={"league": league_id, "season": temporada})
         res = data.get("response", [])
         if res:
             return sorted([
                 {"id": t["team"]["id"], "nombre": t["team"]["name"], "logo": t["team"]["logo"]} 
                 for t in res
             ], key=lambda x: x['nombre'])
-    return []
+    
+    # MODO RESCATE: Si ninguna temporada tiene datos, evita que la app muera
+    return [{"id": 0, "nombre": "⚠️ Sin datos en API (Elija otra liga)", "logo": ""}]
 
 def obtener_promedios_goles(team_id, league_id):
-    # Buscamos datos reales de los últimos 10 partidos
-    for yr in [2025, 2024]:
-        data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": yr, "last": 10})
-        res = data.get("response", [])
-        if res and len(res) >= 3:
-            g_f, g_c, p = 0, 0, 0
-            for f in res:
-                gh, ga = f.get("goals", {}).get("home"), f.get("goals", {}).get("away")
-                if gh is not None and ga is not None:
-                    if f["teams"]["home"]["id"] == team_id:
-                        g_f += gh; g_c += ga
-                    else:
-                        g_f += ga; g_c += gh
-                    p += 1
-            if p > 0: return (round(g_f/p, 2), round(g_c/p, 2))
-    return (1.45, 1.15) # Promedio base si no hay datos
+    if team_id == 0: return (1.5, 1.2) # Valores por defecto para modo rescate
+    
+    # Intenta obtener los últimos 10 partidos para calcular promedios reales
+    data = _api_get("/fixtures", params={"team": team_id, "league": league_id, "season": 2024, "last": 10})
+    res = data.get("response", [])
+    
+    if res:
+        goles_f = 0
+        goles_c = 0
+        for f in res:
+            g = f.get("goals", {})
+            # Detectar si el equipo era local o visitante en ese partido
+            if f["teams"]["home"]["id"] == team_id:
+                goles_f += (g.get("home") or 0)
+                goles_c += (g.get("away") or 0)
+            else:
+                goles_f += (g.get("away") or 0)
+                goles_c += (g.get("home") or 0)
+        return (round(goles_f/len(res), 2), round(goles_c/len(res), 2))
+    
+    return (1.4, 1.1) # Promedio estandar si no hay historial
 
-def obtener_h2h(id_local, id_visitante):
-    data = _api_get("/fixtures/headtohead", params={"h2h": f"{id_local}-{id_visitante}", "last": 5})
-    h2h_lista = []
-    for f in data.get("response", []):
-        gh, ga = f.get("goals", {}).get("home"), f.get("goals", {}).get("away")
-        if gh is not None and ga is not None:
-            ganador = "Empate"
-            if gh > ga: ganador = f["teams"]["home"]["name"]
-            elif ga > gh: ganador = f["teams"]["away"]["name"]
-            h2h_lista.append({"Fecha": f["fixture"]["date"][:10], "Marcador": f"{gh}-{ga}", "Ganador": ganador})
-    return h2h_lista
+def obtener_h2h(id_l, id_v):
+    if id_l == 0 or id_v == 0: return []
+    data = _api_get("/fixtures/headtohead", params={"h2h": f"{id_l}-{id_v}", "last": 5})
+    res = data.get("response", [])
+    h2h = []
+    for f in res:
+        h2h.append({
+            "Fecha": f["fixture"]["date"][:10],
+            "Resultado": f"{f['goals']['home']}-{f['goals']['away']}",
+            "Ganador": f["teams"]["home"]["name"] if f["goals"]["home"] > f["goals"]["away"] else (f["teams"]["away"]["name"] if f["goals"]["away"] > f["goals"]["home"] else "Empate")
+        })
+    return h2h
 
 
 
